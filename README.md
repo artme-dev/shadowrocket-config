@@ -8,7 +8,7 @@
 2. Добавь сервер/подписку: Home → «+».
 3. Config → «+» → вставь URL:
    ```
-   https://raw.githubusercontent.com/artme-dev/shadowrocket-config/main/shadowrocket.conf
+   https://raw.githubusercontent.com/artme-dev/shadowrocket-config/main/artme.conf
    ```
    Затем тапни по конфигу → **Use Config**.
 4. Settings → GeoLite2 Database (нужно для правила `GEOIP,RU`):
@@ -19,7 +19,7 @@
 
 ## Как менять
 
-Всё в одном файле — `shadowrocket.conf` (внешних RULE-SET нет, чтобы маршрутизация не зависела от загрузки других файлов).
+Всё в одном файле — `artme.conf` (внешних RULE-SET нет, чтобы маршрутизация не зависела от загрузки других файлов).
 
 - Добавить домен: строка в нужный блок `[Rule]` — `DOMAIN-SUFFIX,example.com,PROXY` / `DIRECT` / `Claude`.
 - Порядок в `[Rule]` важен: первое совпавшее правило побеждает (Claude → прокси → напрямую → GEOIP → FINAL).
