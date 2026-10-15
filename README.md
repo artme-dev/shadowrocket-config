@@ -17,23 +17,17 @@
 5. Home → Connectivity Test → включи тумблер, разреши установку VPN-профиля.
 6. Проверь, что в группе **Claude** (Home → Proxy Group) есть нужный сервер. Если пусто — имя сервера не попадает в regex в `[Proxy Group]`.
 
-## Обновление
+## Как менять
 
-- **Правила** (`rules/*.list`) — просто правь файл и пушь. Клиенты подтянут при следующем обновлении rule-set'ов.
-- **Конфиг** (`shadowrocket.conf`) — клиенты обновляют через `update-url`; вручную: Config → потянуть список вниз или ⓘ → Update.
+Всё в одном файле — `shadowrocket.conf` (внешних RULE-SET нет, чтобы маршрутизация не зависела от загрузки других файлов).
+
+- Добавить домен: строка в нужный блок `[Rule]` — `DOMAIN-SUFFIX,example.com,PROXY` / `DIRECT` / `Claude`.
+- Порядок в `[Rule]` важен: первое совпавшее правило побеждает (Claude → прокси → напрямую → GEOIP → FINAL).
+- Запушь в `main`. Клиенты подтянут через `update-url`; вручную: Config → ⓘ → Update.
 
 `raw.githubusercontent.com` кэширует файлы ~5 минут.
 
-## Структура
-
-| Файл | Что внутри |
-|---|---|
-| `shadowrocket.conf` | Основной конфиг: DNS, группы, порядок правил |
-| `rules/claude.list` | Домены/IP Anthropic → группа `Claude` |
-| `rules/proxy.list` | Всегда через прокси |
-| `rules/direct.list` | Всегда напрямую (зоны RU, IP-чекеры) |
-
-Синтаксис строк в `.list`: `DOMAIN-SUFFIX,example.com`, `DOMAIN,host.example.com`, `DOMAIN-KEYWORD,example`, `IP-CIDR,1.2.3.0/24,no-resolve`.
+Синтаксис: `DOMAIN-SUFFIX,example.com,POLICY`, `DOMAIN,host.example.com,POLICY`, `DOMAIN-KEYWORD,example,POLICY`, `IP-CIDR,1.2.3.0/24,POLICY,no-resolve`.
 
 ## Не коммитить
 

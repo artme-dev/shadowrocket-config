@@ -1,8 +1,0 @@
-# Всегда через прокси — даже если домен в .ru или IP российский
-DOMAIN-SUFFIX,habr.com
-
-# TikTok CDN (иначе отдаёт региональный контент РФ)
-DOMAIN-SUFFIX,cp-rp16-normal-ycru.tiktokv.com
-DOMAIN-SUFFIX,p16-sign-sg.tiktokcdn.com
-DOMAIN-SUFFIX,p16-sign-va.tiktokcdn.com
-DOMAIN-SUFFIX,sf-ssp.tiktokcdn.com
