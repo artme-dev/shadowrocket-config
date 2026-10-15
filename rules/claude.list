@@ -1,0 +1,6 @@
+# Claude / Anthropic — группа Claude
+DOMAIN-SUFFIX,anthropic.com
+DOMAIN-SUFFIX,claude.ai
+DOMAIN-SUFFIX,claude.com
+DOMAIN-SUFFIX,claudeusercontent.com
+IP-CIDR,160.79.104.0/21,no-resolve
