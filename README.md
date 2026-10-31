@@ -15,7 +15,7 @@
    - Country: `https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/Country-without-asn.mmdb`
    - ASN: `https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/GeoLite2-ASN.mmdb`
 5. Home → Connectivity Test → включи тумблер, разреши установку VPN-профиля.
-6. Проверь, что в группах **Claude** и **OpenAI** (Home → Proxy Group) есть нужный сервер: в Claude — `us-lv-GlobalCDN2`, в OpenAI — `blanc Алматы`. Если пусто — имя сервера не попадает в regex в `[Proxy Group]`.
+6. Проверь, что в группах **Claude** и **OpenAI** (Home → Proxy Group) есть нужный сервер: в Claude — `us-lv-GlobalCDN2`, в OpenAI — `blanc Нью-Йорк` и `blanc Алматы`. Если пусто — имя сервера не попадает в regex в `[Proxy Group]`.
 
 ## Как менять
 
