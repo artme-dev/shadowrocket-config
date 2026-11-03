@@ -14,6 +14,7 @@ The complete output contains secrets and is always written under ignored out/.
 import argparse
 from copy import deepcopy
 import json
+import ipaddress
 import os
 from pathlib import Path
 import re
@@ -82,7 +83,7 @@ def proxy_line(node):
     if node['type'] == 'socks5':
         fields.extend([atom(node['username']), atom(node['password'])])
         add('method', 'auto')
-        add('udp', '0')
+        add('udp', '1' if node.get('udp') else '0')
         add('chain', node['chain'])
     elif node['type'] == 'vless':
         add('password', node['uuid'])
@@ -92,12 +93,12 @@ def proxy_line(node):
         if network == 'ws':
             options = node['ws-opts']
             add('obfs', 'websocket')
-            add('path', options.get('path', '/'))
+            add('obfs-uri', options.get('path', '/'))
             headers = options.get('headers', {})
             extra_headers = set(headers) - {'Host', 'host'}
             if extra_headers or options.get('max-early-data'):
                 raise ValueError('WebSocket headers/early data require an explicit native mapping')
-            add('obfsParam', headers.get('Host', headers.get('host')))
+            add('obfs-host', headers.get('Host', headers.get('host')))
         elif network != 'tcp':
             raise ValueError('Only TCP and WebSocket VLESS transports are configured')
         reality = node.get('reality-opts')
@@ -119,31 +120,64 @@ def proxy_line(node):
     return node['name'] + ' = ' + ', '.join(fields)
 
 
-def assemble(base, settings, secrets, sources, update_url, zoom):
+def voice_rules(document):
+    """Accept only public CIDRs from the official voice document; no silent empty list."""
+    prefixes = document['prefixes']
+    if not prefixes or len(prefixes) > 10000:
+        raise ValueError('Unexpected voice prefix count')
+    networks = set()
+    for record in prefixes:
+        if len(record) != 1 or not set(record) <= {'ipv4Prefix', 'ipv6Prefix'}:
+            raise ValueError('Unexpected voice prefix schema')
+        network = ipaddress.ip_network(next(iter(record.values())), strict=True)
+        if not network.is_global or network.prefixlen == 0:
+            raise ValueError('Voice prefix is not a public network')
+        expected = 'ipv4Prefix' if network.version == 4 else 'ipv6Prefix'
+        if expected not in record:
+            raise ValueError('Voice address family mismatch')
+        networks.add(network)
+    return [f"{'IP-CIDR' if net.version == 4 else 'IP-CIDR6'},{net},OPENAI,no-resolve"
+            for net in sorted(networks, key=lambda n: (n.version, int(n.network_address), n.prefixlen))]
+
+
+def assemble(base, settings, secrets, sources, update_url, zoom, voice):
     if set(settings['routes']) != set(ROUTES):
         raise ValueError('Exactly three route groups are required')
     nodes = [choose(sources[s['provider']], s) for s in settings['servers']]
     names = [node['name'] for node in nodes]
-    if len(names) != len(set(names)) or any(not re.fullmatch('[A-Z0-9-]+', n) for n in names):
-        raise ValueError('Server names must be unique uppercase ASCII identifiers')
-    entry_names = set(names)
+    reserved = {'AUTO', 'SERVICE', 'OPENAI', 'CLAUDE', 'OTHER', 'ISP-OPENAI', 'ISP-CLAUDE', 'ISP-OTHER', 'REJECT', 'DIRECT', 'PROXY'}
+    if (len(names) != len(set(names)) or set(names) & reserved
+            or any(not re.fullmatch('[A-Z0-9-]+', n) for n in names)):
+        raise ValueError('Server names must be unique uppercase identifiers, distinct from policies')
+    rotation = settings['rotation']
+    priority = rotation['priority']
+    if not priority or len(priority) != len(set(priority)) or set(priority) != set(names):
+        raise ValueError('Rotation priority must contain every entry exactly once')
+    if rotation['selected'] not in ['AUTO', *names]:
+        raise ValueError('Invalid selected entry')
+    interval, timeout = rotation['interval'], rotation['timeout']
+    if not isinstance(interval, int) or not 30 <= interval <= 3600 or not isinstance(timeout, int) or not 1 <= timeout <= 30:
+        raise ValueError('Invalid entry health-check timing')
+    if not rotation['url'].startswith('https://') or any(c in rotation['url'] for c in ',\r\n'):
+        raise ValueError('Entry health-check URL must be HTTPS')
     groups = [
-        '# Все входные серверы персонального профиля; эта группа сама по себе не меняет правила.',
-        'artem-personal = select, ' + ', '.join(names) + ', policy-select-name=BLANC-NEWYORK',
-        '',
-        '# Сервисные выходы. Каждый ISP-узел использует свою группу ENTRY-*.',
-        'SERVICE = select, ISP-OPENAI, ISP-CLAUDE, ISP-OTHER, REJECT, policy-select-name=ISP-OTHER',
-        '',
-        '# Выбор входа независим для каждой категории. Смена входа не меняет ISP-выход.',
+        '# AUTO: первый доступный вход по порядку; это проверка VPN, а не всей цепочки ISP.',
+        'AUTO = fallback, ' + ', '.join(priority) + f", url={rotation['url']}, interval={interval}, timeout={timeout}",
+        '# AUTO по умолчанию; конкретный сервер здесь вручную закрепляет вход для всех категорий.',
+        'artem-personal = select, AUTO, ' + ', '.join(names) + ', policy-select-name=' + rotation['selected'],
     ]
+    exits = []
     for route in ROUTES:
         options = settings['routes'][route]
-        if not options['entries'] or not set(options['entries']) <= entry_names:
-            raise ValueError(f'Invalid entry set for {route}')
-        if options['selected_entry'] not in options['entries']:
-            raise ValueError(f'Selected entry is absent from {route}')
-        groups.append(f'ENTRY-{route} = select, ' + ', '.join(options['entries'])
-                      + ', REJECT, policy-select-name=' + options['selected_entry'])
+        if options['mode'] == 'vpn':
+            if route != 'OTHER':
+                raise ValueError('AI categories require a fixed ISP exit')
+            groups.append(f'{route} = select, artem-personal, REJECT, policy-select-name=artem-personal')
+            continue
+        if options['mode'] != 'isp':
+            raise ValueError('Route mode must be isp or vpn')
+        if not isinstance(options['udp'], bool):
+            raise ValueError('UDP support must be explicitly true or false')
         credentials = secrets['exits'][options['exit']]
         port = credentials['port']
         if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
@@ -151,22 +185,40 @@ def assemble(base, settings, secrets, sources, update_url, zoom):
         if any(not isinstance(credentials[key], str) or not credentials[key]
                for key in ('server', 'username', 'password')):
             raise ValueError('Missing SOCKS5 credentials')
-        nodes.append({'name': 'ISP-' + route, 'type': 'socks5', **credentials,
-                      'chain': 'ENTRY-' + route})
-    groups.extend(['', '# Только закреплённый выход или ручной REJECT. Другого IP в группах нет.'])
-    for route in ROUTES:
-        groups.append(f'{route} = select, ISP-{route}, REJECT, policy-select-name=ISP-{route}')
+        exit_name = 'ISP-' + route
+        # Explicit field selection prevents private metadata from changing the generated chain.
+        nodes.append({'name': exit_name, 'type': 'socks5',
+                      **{key: credentials[key] for key in ('server', 'port', 'username', 'password')},
+                      'udp': options['udp'], 'chain': 'artem-personal'})
+        exits.append(exit_name)
+        groups.append(f'{route} = select, {exit_name}, REJECT, policy-select-name={exit_name}')
+    groups.extend(['# Сервисные узлы для просмотра; правила используют OPENAI/CLAUDE/OTHER.',
+                   'SERVICE = select, ' + ', '.join(exits) + ', REJECT, policy-select-name=' + exits[0]])
     _, general_and_rest = base.split('[General]', 1)
     general, old_groups_and_rules = general_and_rest.split('[Proxy Group]', 1)
     general = re.sub(r'^update-url\s*=.*$', 'update-url = ' + update_url, general, flags=re.M)
-    general += '\n# При отсутствующем входе запрещено подключаться к ISP напрямую.\nclose-if-proxy-chain-missing = true\n'
+    # The numeric-IP DoT endpoint repeatedly failed certificate validation in native logs.
+    general = general.replace(', tls://1.1.1.2:853', '')
+    general += '\n# Не пропускать отсутствующий родительский VPN и не подключаться к ISP напрямую.\nclose-if-proxy-chain-missing = true\n'
     _, old_rules = old_groups_and_rules.split('[Rule]', 1)
-    rules = []
+    rules = [
+        '# Диагностика: эти точные имена намеренно стоят перед общими правилами.',
+        'DOMAIN,api.ipify.org,OPENAI',
+        'DOMAIN,icanhazip.com,CLAUDE',
+        'DOMAIN,checkip.amazonaws.com,OTHER',
+        'DOMAIN,ifconfig.me,DIRECT',
+        '# Дополнительные собственные домены OpenAI из официального списка.',
+        'DOMAIN-SUFFIX,oaistatsig.com,OPENAI',
+        'DOMAIN-SUFFIX,openaimerge.com,OPENAI',
+        '# Голос: https://openai.com/chatgpt-voice.json; snapshot ' + str(voice['creationTime']),
+        *voice_rules(voice),
+        '',
+    ]
     for line in old_rules.splitlines():
         if line.startswith('RULE-SET,'):
             if '/rules/zoom.list,' not in line:
                 raise ValueError('Unexpected external rule set')
-            rules.append('# IP Zoom включены в этот файл: дополнительная загрузка списка не нужна.')
+            rules.append('# IP Zoom встроены в профиль.')
             for item in zoom.splitlines():
                 if not item.strip() or item.lstrip().startswith(('#', ';')):
                     continue
@@ -177,23 +229,29 @@ def assemble(base, settings, secrets, sources, update_url, zoom):
         if line and not line.lstrip().startswith(('#', ';')):
             line = ','.join('OTHER' if part == 'PROXY' else part.upper() if part in ('Claude', 'OpenAI') else part
                             for part in line.split(','))
-        line = line.replace('через выбранный на главном экране сервер', 'через закреплённый выход OTHER')
+        if line.startswith('IP-CIDR,160.79.104.0/21,'):
+            rules.extend(['IP-CIDR,160.79.104.0/23,CLAUDE,no-resolve',
+                          'IP-CIDR,153.61.224.0/22,CLAUDE,no-resolve'])
+            continue
+        if 'Только домены: своих IP-диапазонов OpenAI' in line:
+            line = '# Доменные правила дополняют официальный список голосовых IP выше.'
+        line = line.replace('через выбранный на главном экране сервер', 'через группу OTHER')
         line = line.replace('Иначе они уходят через PROXY с другого IP.', 'Иначе они относятся к OTHER.')
         line = line.replace('# Домены — здесь; IP-диапазоны (их ~50) — в rules/zoom.list. Если список не скачается, домены всё равно работают.',
-                            '# Домены и IP-диапазоны — ниже, всё включено в этот файл.')
+                            '# Домены и IP-диапазоны включены в этот файл.')
         rules.append(line)
-    header = '''# artme — единый персональный профиль Shadowrocket
+    header = """# artme — персональный профиль Shadowrocket, кандидат для проверки
 # Содержит ключи и пароли. Не публиковать в открытом репозитории.
-# Установка: Config → Download from URL → Use Config; Global Routing = Config.
-# Все серверы ниже встроены в файл; отдельные подписки для этого профиля не нужны.
-# Схема: устройство → ENTRY-* → ISP-* → сайт. DIRECT-исключения сохранены.
-# На чистом устройстве выбираются policy-select-name; выбор в UI может сохраняться локально.
-# Сетевые проверки этой версии выполняются после чистой установки.
-'''
+# Нужна современная версия Shadowrocket с исправлениями групп Proxy Pass (2.2.73+).
+# Config → Download from URL → Use Config; Global Routing = Config.
+# AI: устройство → artem-personal → ISP-* → сайт. OTHER: устройство → artem-personal → сайт.
+# DIRECT-исключения сохранены; точные адреса IP-проверок переопределены выше них.
+# Начальный выбор задаёт policy-select-name; приложение может помнить прежний выбор.
+# Внешние серверные подписки не нужны. Все узлы и IP-списки встроены в этот файл.
+"""
     body = header + '\n[General]' + general + '\n[Proxy]\n'
-    body += '# Входные серверы artem-personal; затем три независимых ISP-выхода.\n'
     body += '\n'.join(proxy_line(node) for node in nodes)
-    body += '\n\n[Proxy Group]\n' + '\n'.join(groups) + '\n\n[Rule]' + '\n'.join(rules) + '\n'
+    body += '\n\n[Proxy Group]\n' + '\n'.join(groups) + '\n\n[Rule]\n' + '\n'.join(rules) + '\n'
     return body, nodes
 
 
@@ -219,23 +277,33 @@ def main():
         sources = {provider: json.loads((args.sources_dir / (provider + '-source.json')).read_text()) for provider in sorted(providers)}
     else:
         sources = {provider: provider_nodes(provider, secrets['providers'][provider]) for provider in sorted(providers)}
+    if args.sources_dir:
+        voice = json.loads((args.sources_dir / 'chatgpt-voice.json').read_text())
+    else:
+        with urllib.request.urlopen('https://openai.com/chatgpt-voice.json', timeout=30) as response:
+            voice = json.loads(response.read())
     body, nodes = assemble((ROOT / 'artme.conf').read_text(), settings, secrets, sources,
-                           update_url, (ROOT / 'rules/zoom.list').read_text())
+                           update_url, (ROOT / 'rules/zoom.list').read_text(), voice)
     path = ROOT / 'out/artme.conf'
     private_write(path, body)
     private_write(ROOT / 'out/artme-nodes.json', json.dumps(nodes, ensure_ascii=False, indent=2) + '\n')
-    print(f'Complete artme.conf assembled: {len(settings["servers"])} entries, 3 exits, 8 groups. Secrets hidden.')
+    print(f'Complete artme.conf assembled: {len(settings["servers"])} entries, {len(nodes) - len(settings["servers"])} exits. Secrets hidden.')
     if args.publish:
         if gh('api', 'user', '--jq', '.login').strip() != owner:
             raise ValueError('Unexpected GitHub account')
-        metadata = json.loads(gh('api', f'gists/{gist}', '--jq', '{public:.public,owner:.owner.login}'))
-        if metadata['public'] or metadata['owner'] != owner:
+        metadata = json.loads(gh('api', f'gists/{gist}'))
+        if metadata['public'] or metadata['owner']['login'] != owner:
             raise ValueError('Target must be the existing secret personal Gist owned by the expected account')
+        private_write(ROOT / 'out/publication-before.private.json', json.dumps(metadata))
         payload = ROOT / 'out/publish-artme.json'
         private_write(payload, json.dumps({'files': {'artme.conf': {'content': body}}}))
         gh('api', '--method', 'PATCH', f'gists/{gist}', '--input', str(payload), '--silent')
         # Verify the exact stored file without displaying its contents or changing other Gist files.
-        stored = json.loads(gh('api', f'gists/{gist}', '--jq', '.files["artme.conf"]'))
+        after = json.loads(gh('api', f'gists/{gist}'))
+        stored = after['files']['artme.conf']
+        for name, previous in metadata['files'].items():
+            if name != 'artme.conf' and after['files'].get(name, {}).get('content') != previous.get('content'):
+                raise ValueError('An unrelated publication file changed')
         if stored.get('truncated') or stored['content'] != body:
             raise ValueError('Published file could not be verified byte-for-byte')
         private_write(ROOT / 'out/artme-url.txt', update_url + '\n')
