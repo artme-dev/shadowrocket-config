@@ -266,12 +266,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--publish', action='store_true')
     parser.add_argument('--sources-dir', type=Path, help='Use provider snapshots already downloaded for this assembly')
+    parser.add_argument('--settings', type=Path, default=ROOT / 'personal/artme.json')
+    parser.add_argument('--filename', default='artme.conf', help='Separate .conf filename for a reviewable candidate')
+    parser.add_argument('--output-dir', type=Path, default=ROOT / 'out')
     args = parser.parse_args()
-    settings = json.loads((ROOT / 'personal/artme.json').read_text())
+    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]{0,75}\.conf', args.filename):
+        raise ValueError('Invalid config filename')
+    output = args.output_dir.resolve()
+    if output != ROOT / 'out' and ROOT / 'out' not in output.parents:
+        raise ValueError('Complete private profiles must be written under ignored out/')
+    settings = json.loads(args.settings.read_text())
     secrets = json.loads((ROOT / 'personal/secrets.local.json').read_text())
     target = json.loads((ROOT / 'personal/publish.local.json').read_text())
     owner, gist = target['owner'], target['gist']
-    update_url = f'https://gist.githubusercontent.com/{owner}/{gist}/raw/artme.conf'
+    update_url = f'https://gist.githubusercontent.com/{owner}/{gist}/raw/{args.filename}'
     providers = {node['provider'] for node in settings['servers']}
     if args.sources_dir:
         sources = {provider: json.loads((args.sources_dir / (provider + '-source.json')).read_text()) for provider in sorted(providers)}
@@ -284,30 +292,30 @@ def main():
             voice = json.loads(response.read())
     body, nodes = assemble((ROOT / 'artme.conf').read_text(), settings, secrets, sources,
                            update_url, (ROOT / 'rules/zoom.list').read_text(), voice)
-    path = ROOT / 'out/artme.conf'
+    path = output / args.filename
     private_write(path, body)
-    private_write(ROOT / 'out/artme-nodes.json', json.dumps(nodes, ensure_ascii=False, indent=2) + '\n')
-    print(f'Complete artme.conf assembled: {len(settings["servers"])} entries, {len(nodes) - len(settings["servers"])} exits. Secrets hidden.')
+    private_write(output / 'artme-nodes.json', json.dumps(nodes, ensure_ascii=False, indent=2) + '\n')
+    print(f'Complete {args.filename} assembled: {len(settings["servers"])} entries, {len(nodes) - len(settings["servers"])} exits. Secrets hidden.')
     if args.publish:
         if gh('api', 'user', '--jq', '.login').strip() != owner:
             raise ValueError('Unexpected GitHub account')
         metadata = json.loads(gh('api', f'gists/{gist}'))
         if metadata['public'] or metadata['owner']['login'] != owner:
             raise ValueError('Target must be the existing secret personal Gist owned by the expected account')
-        private_write(ROOT / 'out/publication-before.private.json', json.dumps(metadata))
-        payload = ROOT / 'out/publish-artme.json'
-        private_write(payload, json.dumps({'files': {'artme.conf': {'content': body}}}))
+        private_write(output / 'publication-before.private.json', json.dumps(metadata))
+        payload = output / 'publish-artme.json'
+        private_write(payload, json.dumps({'files': {args.filename: {'content': body}}}))
         gh('api', '--method', 'PATCH', f'gists/{gist}', '--input', str(payload), '--silent')
         # Verify the exact stored file without displaying its contents or changing other Gist files.
         after = json.loads(gh('api', f'gists/{gist}'))
-        stored = after['files']['artme.conf']
+        stored = after['files'][args.filename]
         for name, previous in metadata['files'].items():
-            if name != 'artme.conf' and after['files'].get(name, {}).get('content') != previous.get('content'):
+            if name != args.filename and after['files'].get(name, {}).get('content') != previous.get('content'):
                 raise ValueError('An unrelated publication file changed')
         if stored.get('truncated') or stored['content'] != body:
             raise ValueError('Published file could not be verified byte-for-byte')
-        private_write(ROOT / 'out/artme-url.txt', update_url + '\n')
-        print('Published and verified artme.conf in existing secret personal Gist. Other files unchanged.')
+        private_write(output / 'artme-url.txt', update_url + '\n')
+        print(f'Published and verified {args.filename} in existing secret personal Gist. Other files unchanged.')
 
 
 if __name__ == '__main__':
