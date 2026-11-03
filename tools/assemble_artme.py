@@ -1,0 +1,249 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml"]
+# ///
+"""Assemble one complete private artme.conf. No device operations or network tests.
+
+uv run tools/assemble_artme.py
+uv run tools/assemble_artme.py --publish
+
+Public inputs: artme.conf (base rules), personal/artme.json, rules/zoom.list.
+Private inputs: personal/secrets.local.json and personal/publish.local.json.
+The complete output contains secrets and is always written under ignored out/.
+"""
+import argparse
+from copy import deepcopy
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+ROUTES = ('OPENAI', 'CLAUDE', 'OTHER')
+
+
+def private_write(path, text):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, 'w') as stream:
+        stream.write(text)
+
+
+def provider_nodes(provider, url):
+    import yaml
+    agent = 'clash.meta' if provider == 'blanc' else 'Shadowrocket'
+    request = urllib.request.Request(url, headers={'User-Agent': agent})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return yaml.safe_load(response.read())['proxies']
+    except Exception as exc:
+        raise ValueError(f'Cannot fetch {provider} subscription ({type(exc).__name__}); private URL hidden') from None
+
+
+def atom(value):
+    text = str(value)
+    if any(char in text for char in ('\r', '\n', '\x00')):
+        raise ValueError('Proxy parameters must not contain control characters')
+    if not text or any(char in text for char in ',"#;') or text != text.strip():
+        return json.dumps(text, ensure_ascii=False)
+    return text
+
+
+def choose(source, wanted):
+    candidates = []
+    for node in source:
+        if node.get('type') != wanted['protocol']:
+            continue
+        if wanted['provider'] == 'blanc':
+            matched = node['name'].split(',', 1)[0].endswith(' ' + wanted['server'])
+        else:
+            matched = ' xeovo ' + wanted['server'] + ' (' in node['name']
+            if node['type'] == 'vless':
+                matched = matched and 'ws-opts' in node
+        if matched:
+            candidates.append(node)
+    if not candidates:
+        raise ValueError(f'No compatible source node for {wanted["name"]}')
+    node = deepcopy(candidates[0])
+    node['name'] = wanted['name']
+    if any(node.get(key) for key in ('chain', 'dialer-proxy', 'underlying-proxy')):
+        raise ValueError('An entry node already contains a chain')
+    return node
+
+
+def proxy_line(node):
+    fields = [node['type'], atom(node['server']), str(int(node['port']))]
+    def add(key, value):
+        if value is not None and value != '':
+            fields.append(key + '=' + atom(value))
+    if node['type'] == 'socks5':
+        fields.extend([atom(node['username']), atom(node['password'])])
+        add('method', 'auto')
+        add('udp', '0')
+        add('chain', node['chain'])
+    elif node['type'] == 'vless':
+        add('password', node['uuid'])
+        add('tls', 'true' if node.get('tls') else 'false')
+        add('peer', node.get('servername', node.get('sni')))
+        network = node.get('network', 'tcp')
+        if network == 'ws':
+            options = node['ws-opts']
+            add('obfs', 'websocket')
+            add('path', options.get('path', '/'))
+            headers = options.get('headers', {})
+            extra_headers = set(headers) - {'Host', 'host'}
+            if extra_headers or options.get('max-early-data'):
+                raise ValueError('WebSocket headers/early data require an explicit native mapping')
+            add('obfsParam', headers.get('Host', headers.get('host')))
+        elif network != 'tcp':
+            raise ValueError('Only TCP and WebSocket VLESS transports are configured')
+        reality = node.get('reality-opts')
+        if reality:
+            add('reality', 'true')
+            add('pbk', reality['public-key'])
+            add('sid', reality.get('short-id'))
+        add('flow', node.get('flow'))
+        add('fp', node.get('client-fingerprint'))
+        add('udp', '1' if node.get('udp') else '0')
+    elif node['type'] == 'hysteria2':
+        add('auth', node['password'])
+        add('peer', node.get('sni', node.get('servername')))
+        add('udp', '1')
+    else:
+        raise ValueError('Unsupported node type')
+    if node.get('skip-cert-verify'):
+        raise ValueError('Certificate verification must remain enabled')
+    return node['name'] + ' = ' + ', '.join(fields)
+
+
+def assemble(base, settings, secrets, sources, update_url, zoom):
+    if set(settings['routes']) != set(ROUTES):
+        raise ValueError('Exactly three route groups are required')
+    nodes = [choose(sources[s['provider']], s) for s in settings['servers']]
+    names = [node['name'] for node in nodes]
+    if len(names) != len(set(names)) or any(not re.fullmatch('[A-Z0-9-]+', n) for n in names):
+        raise ValueError('Server names must be unique uppercase ASCII identifiers')
+    entry_names = set(names)
+    groups = [
+        '# Все входные серверы персонального профиля; эта группа сама по себе не меняет правила.',
+        'artem-personal = select, ' + ', '.join(names) + ', policy-select-name=BLANC-NEWYORK',
+        '',
+        '# Сервисные выходы. Каждый ISP-узел использует свою группу ENTRY-*.',
+        'SERVICE = select, ISP-OPENAI, ISP-CLAUDE, ISP-OTHER, REJECT, policy-select-name=ISP-OTHER',
+        '',
+        '# Выбор входа независим для каждой категории. Смена входа не меняет ISP-выход.',
+    ]
+    for route in ROUTES:
+        options = settings['routes'][route]
+        if not options['entries'] or not set(options['entries']) <= entry_names:
+            raise ValueError(f'Invalid entry set for {route}')
+        if options['selected_entry'] not in options['entries']:
+            raise ValueError(f'Selected entry is absent from {route}')
+        groups.append(f'ENTRY-{route} = select, ' + ', '.join(options['entries'])
+                      + ', REJECT, policy-select-name=' + options['selected_entry'])
+        credentials = secrets['exits'][options['exit']]
+        port = credentials['port']
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ValueError('Invalid SOCKS5 port')
+        if any(not isinstance(credentials[key], str) or not credentials[key]
+               for key in ('server', 'username', 'password')):
+            raise ValueError('Missing SOCKS5 credentials')
+        nodes.append({'name': 'ISP-' + route, 'type': 'socks5', **credentials,
+                      'chain': 'ENTRY-' + route})
+    groups.extend(['', '# Только закреплённый выход или ручной REJECT. Другого IP в группах нет.'])
+    for route in ROUTES:
+        groups.append(f'{route} = select, ISP-{route}, REJECT, policy-select-name=ISP-{route}')
+    _, general_and_rest = base.split('[General]', 1)
+    general, old_groups_and_rules = general_and_rest.split('[Proxy Group]', 1)
+    general = re.sub(r'^update-url\s*=.*$', 'update-url = ' + update_url, general, flags=re.M)
+    general += '\n# При отсутствующем входе запрещено подключаться к ISP напрямую.\nclose-if-proxy-chain-missing = true\n'
+    _, old_rules = old_groups_and_rules.split('[Rule]', 1)
+    rules = []
+    for line in old_rules.splitlines():
+        if line.startswith('RULE-SET,'):
+            if '/rules/zoom.list,' not in line:
+                raise ValueError('Unexpected external rule set')
+            rules.append('# IP Zoom включены в этот файл: дополнительная загрузка списка не нужна.')
+            for item in zoom.splitlines():
+                if not item.strip() or item.lstrip().startswith(('#', ';')):
+                    continue
+                fields = item.split(',')
+                fields.insert(2, 'DIRECT')
+                rules.append(','.join(fields))
+            continue
+        if line and not line.lstrip().startswith(('#', ';')):
+            line = ','.join('OTHER' if part == 'PROXY' else part.upper() if part in ('Claude', 'OpenAI') else part
+                            for part in line.split(','))
+        line = line.replace('через выбранный на главном экране сервер', 'через закреплённый выход OTHER')
+        line = line.replace('Иначе они уходят через PROXY с другого IP.', 'Иначе они относятся к OTHER.')
+        line = line.replace('# Домены — здесь; IP-диапазоны (их ~50) — в rules/zoom.list. Если список не скачается, домены всё равно работают.',
+                            '# Домены и IP-диапазоны — ниже, всё включено в этот файл.')
+        rules.append(line)
+    header = '''# artme — единый персональный профиль Shadowrocket
+# Содержит ключи и пароли. Не публиковать в открытом репозитории.
+# Установка: Config → Download from URL → Use Config; Global Routing = Config.
+# Все серверы ниже встроены в файл; отдельные подписки для этого профиля не нужны.
+# Схема: устройство → ENTRY-* → ISP-* → сайт. DIRECT-исключения сохранены.
+# На чистом устройстве выбираются policy-select-name; выбор в UI может сохраняться локально.
+# Сетевые проверки этой версии выполняются после чистой установки.
+'''
+    body = header + '\n[General]' + general + '\n[Proxy]\n'
+    body += '# Входные серверы artem-personal; затем три независимых ISP-выхода.\n'
+    body += '\n'.join(proxy_line(node) for node in nodes)
+    body += '\n\n[Proxy Group]\n' + '\n'.join(groups) + '\n\n[Rule]' + '\n'.join(rules) + '\n'
+    return body, nodes
+
+
+def gh(*args):
+    result = subprocess.run(['gh', *args], capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError('GitHub operation failed; details hidden to avoid exposing private content')
+    return result.stdout
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--publish', action='store_true')
+    parser.add_argument('--sources-dir', type=Path, help='Use provider snapshots already downloaded for this assembly')
+    args = parser.parse_args()
+    settings = json.loads((ROOT / 'personal/artme.json').read_text())
+    secrets = json.loads((ROOT / 'personal/secrets.local.json').read_text())
+    target = json.loads((ROOT / 'personal/publish.local.json').read_text())
+    owner, gist = target['owner'], target['gist']
+    update_url = f'https://gist.githubusercontent.com/{owner}/{gist}/raw/artme.conf'
+    providers = {node['provider'] for node in settings['servers']}
+    if args.sources_dir:
+        sources = {provider: json.loads((args.sources_dir / (provider + '-source.json')).read_text()) for provider in sorted(providers)}
+    else:
+        sources = {provider: provider_nodes(provider, secrets['providers'][provider]) for provider in sorted(providers)}
+    body, nodes = assemble((ROOT / 'artme.conf').read_text(), settings, secrets, sources,
+                           update_url, (ROOT / 'rules/zoom.list').read_text())
+    path = ROOT / 'out/artme.conf'
+    private_write(path, body)
+    private_write(ROOT / 'out/artme-nodes.json', json.dumps(nodes, ensure_ascii=False, indent=2) + '\n')
+    print(f'Complete artme.conf assembled: {len(settings["servers"])} entries, 3 exits, 8 groups. Secrets hidden.')
+    if args.publish:
+        if gh('api', 'user', '--jq', '.login').strip() != owner:
+            raise ValueError('Unexpected GitHub account')
+        metadata = json.loads(gh('api', f'gists/{gist}', '--jq', '{public:.public,owner:.owner.login}'))
+        if metadata['public'] or metadata['owner'] != owner:
+            raise ValueError('Target must be the existing secret personal Gist owned by the expected account')
+        payload = ROOT / 'out/publish-artme.json'
+        private_write(payload, json.dumps({'files': {'artme.conf': {'content': body}}}))
+        gh('api', '--method', 'PATCH', f'gists/{gist}', '--input', str(payload), '--silent')
+        # Verify the exact stored file without displaying its contents or changing other Gist files.
+        stored = json.loads(gh('api', f'gists/{gist}', '--jq', '.files["artme.conf"]'))
+        if stored.get('truncated') or stored['content'] != body:
+            raise ValueError('Published file could not be verified byte-for-byte')
+        private_write(ROOT / 'out/artme-url.txt', update_url + '\n')
+        print('Published and verified artme.conf in existing secret personal Gist. Other files unchanged.')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, KeyError, FileNotFoundError) as exc:
+        raise SystemExit(f'Assembly failed: {exc}') from None

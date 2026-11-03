@@ -1,0 +1,28 @@
+{
+  "title": "artme",
+  "servers": [
+    {"name": "XEOVO-LASVEGAS", "provider": "xeovo", "server": "us-lv-GlobalCDN2", "protocol": "vless"},
+    {"name": "XEOVO-NEWYORK", "provider": "xeovo", "server": "us-nyc-global4", "protocol": "vless"},
+    {"name": "XEOVO-NEWYORK-HY2", "provider": "xeovo", "server": "us-nyc-hysteria1", "protocol": "hysteria2"},
+    {"name": "BLANC-ALMATY", "provider": "blanc", "server": "Алматы", "protocol": "vless"},
+    {"name": "BLANC-NEWYORK", "provider": "blanc", "server": "Нью-Йорк", "protocol": "vless"},
+    {"name": "BLANC-FRANKFURT", "provider": "blanc", "server": "Франкфурт-на-Майне", "protocol": "vless"}
+  ],
+  "routes": {
+    "OPENAI": {
+      "entries": ["BLANC-NEWYORK", "XEOVO-NEWYORK", "BLANC-FRANKFURT", "BLANC-ALMATY", "XEOVO-LASVEGAS"],
+      "selected_entry": "BLANC-NEWYORK",
+      "exit": "isp-main"
+    },
+    "CLAUDE": {
+      "entries": ["BLANC-NEWYORK", "XEOVO-LASVEGAS", "XEOVO-NEWYORK", "BLANC-FRANKFURT", "BLANC-ALMATY"],
+      "selected_entry": "BLANC-NEWYORK",
+      "exit": "isp-main"
+    },
+    "OTHER": {
+      "entries": ["BLANC-NEWYORK", "XEOVO-NEWYORK", "BLANC-FRANKFURT", "BLANC-ALMATY", "XEOVO-LASVEGAS"],
+      "selected_entry": "BLANC-NEWYORK",
+      "exit": "isp-main"
+    }
+  }
+}
