@@ -1,6 +1,6 @@
-"""Screen private VLESS/Hysteria2 entry snapshots without changing system VPN or contacting ISP.
+"""Screen private VLESS/Hysteria2/Shadowsocks/Trojan entry snapshots without changing system VPN or contacting ISP.
 
-Input: ignored JSON array of Clash-style VLESS/Hysteria2 nodes with non-secret display names.
+Input: ignored JSON array of Clash-style encrypted proxy nodes with non-secret display names.
 Uses an isolated sing-box bound to a named physical interface and loopback listeners.
 Results are preliminary entry-only measurements, not ISP-chain or voice benchmarks.
 """
@@ -28,8 +28,10 @@ def save(path, value):
 
 
 def outbound(node, tag, interface):
-    if node['type'] not in ('vless', 'hysteria2') or node.get('skip-cert-verify') or (node['type'] == 'vless' and not node.get('tls')):
-        raise ValueError('Only TLS-verified VLESS/Hysteria2 entries are supported')
+    if node['type'] not in ('vless', 'hysteria2', 'ss', 'trojan') or node.get('skip-cert-verify') or (node['type'] == 'vless' and not node.get('tls')):
+        raise ValueError('Unsupported or insecure entry configuration')
+    if node.get('plugin') or (node['type']=='ss' and node.get('cipher') not in ('chacha20-ietf-poly1305','aes-128-gcm','aes-256-gcm')):
+        raise ValueError('Only plain supported AEAD Shadowsocks is mapped')
     host = node['server']
     try:
         address = ipaddress.ip_address(host)
@@ -51,6 +53,14 @@ def outbound(node, tag, interface):
         raise ValueError('Entry must resolve to a public address')
     tls = {'enabled': True, 'server_name': node.get('servername', node.get('sni', host)),
            'utls': {'enabled': True, 'fingerprint': node.get('client-fingerprint', 'chrome')}}
+    if node['type'] == 'ss':
+        return {'type':'shadowsocks','tag':tag,'server':str(address),'server_port':node['port'],
+                'method':node['cipher'],'password':node['password'],'bind_interface':interface}
+    if node['type'] == 'trojan':
+        if node.get('network','tcp') != 'tcp':
+            raise ValueError('Only Trojan TLS over TCP is mapped')
+        return {'type':'trojan','tag':tag,'server':str(address),'server_port':node['port'],
+                'password':node['password'],'tls':tls,'bind_interface':interface}
     if node['type'] == 'hysteria2':
         tls.pop('utls', None)
         return {'type': 'hysteria2', 'tag': tag, 'server': str(address), 'server_port': node['port'],

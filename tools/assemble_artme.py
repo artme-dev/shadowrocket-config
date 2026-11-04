@@ -109,6 +109,18 @@ def proxy_line(node):
         add('flow', node.get('flow'))
         add('fp', node.get('client-fingerprint'))
         add('udp', '1' if node.get('udp') else '0')
+    elif node['type'] == 'ss':
+        if node.get('plugin') or node.get('cipher') not in ('chacha20-ietf-poly1305', 'aes-128-gcm', 'aes-256-gcm'):
+            raise ValueError('Only explicitly mapped AEAD Shadowsocks entries are supported')
+        add('method', node['cipher'])
+        add('password', node['password'])
+        add('udp', '1' if node.get('udp') else '0')
+    elif node['type'] == 'trojan':
+        if node.get('network', 'tcp') != 'tcp':
+            raise ValueError('Only Trojan TLS over TCP is mapped')
+        add('password', node['password'])
+        add('peer', node.get('servername', node.get('sni', node['server'])))
+        add('udp', '1' if node.get('udp') else '0')
     elif node['type'] == 'hysteria2':
         add('auth', node['password'])
         add('peer', node.get('sni', node.get('servername')))
@@ -145,7 +157,7 @@ def assemble(base, settings, secrets, sources, update_url, zoom, voice):
         raise ValueError('Exactly three route groups are required')
     nodes = [choose(sources[s['provider']], s) for s in settings['servers']]
     names = [node['name'] for node in nodes]
-    reserved = {'AUTO', 'SERVICE', 'OPENAI', 'CLAUDE', 'OTHER', 'ISP-OPENAI', 'ISP-CLAUDE', 'ISP-OTHER', 'REJECT', 'DIRECT', 'PROXY'}
+    reserved = {'AUTO', 'SERVICE', 'OPENAI', 'CLAUDE', 'OTHER', 'ISP-OPENAI', 'ISP-CLAUDE', 'ISP-OTHER', 'REJECT', 'DIRECT', 'PROXY', 'ARTEM-PERSONAL'}
     if (len(names) != len(set(names)) or set(names) & reserved
             or any(not re.fullmatch('[A-Z0-9-]+', n) for n in names)):
         raise ValueError('Server names must be unique uppercase identifiers, distinct from policies')
@@ -207,6 +219,11 @@ def assemble(base, settings, secrets, sources, update_url, zoom, voice):
         'DOMAIN,icanhazip.com,CLAUDE',
         'DOMAIN,checkip.amazonaws.com,OTHER',
         'DOMAIN,ifconfig.me,DIRECT',
+        '# UDP-диагностика: только Quad9 на альтернативном порту; обычный DNS не меняется.',
+        'AND,((DST-PORT,9953),(IP-CIDR,9.9.9.9/32)),OPENAI',
+        '# Конкретные проекты телеметрии OpenAI из официального списка.',
+        'DOMAIN,o207216.ingest.sentry.io,OPENAI',
+        'DOMAIN,o33249.ingest.sentry.io,OPENAI',
         '# Дополнительные собственные домены OpenAI из официального списка.',
         'DOMAIN-SUFFIX,oaistatsig.com,OPENAI',
         'DOMAIN-SUFFIX,openaimerge.com,OPENAI',
@@ -240,9 +257,9 @@ def assemble(base, settings, secrets, sources, update_url, zoom, voice):
         line = line.replace('# Домены — здесь; IP-диапазоны (их ~50) — в rules/zoom.list. Если список не скачается, домены всё равно работают.',
                             '# Домены и IP-диапазоны включены в этот файл.')
         rules.append(line)
-    header = """# artme — персональный профиль Shadowrocket, кандидат для проверки
+    header = """# artme — персональный профиль Shadowrocket
 # Содержит ключи и пароли. Не публиковать в открытом репозитории.
-# Нужна современная версия Shadowrocket с исправлениями групп Proxy Pass (2.2.73+).
+# Проверяемая версия клиента: Shadowrocket 2.2.93 (3488); старые клиенты нужно обновить.
 # Config → Download from URL → Use Config; Global Routing = Config.
 # AI: устройство → artem-personal → ISP-* → сайт. OTHER: устройство → artem-personal → сайт.
 # DIRECT-исключения сохранены; точные адреса IP-проверок переопределены выше них.
@@ -292,6 +309,9 @@ def main():
             voice = json.loads(response.read())
     body, nodes = assemble((ROOT / 'artme.conf').read_text(), settings, secrets, sources,
                            update_url, (ROOT / 'rules/zoom.list').read_text(), voice)
+    from validate_artme import validate_body
+    validation = validate_body(body, settings, voice, (ROOT / 'artme.conf').read_text())
+    private_write(output / 'semantic-validation.private.json', json.dumps(validation, indent=2) + '\n')
     path = output / args.filename
     private_write(path, body)
     private_write(output / 'artme-nodes.json', json.dumps(nodes, ensure_ascii=False, indent=2) + '\n')
@@ -303,17 +323,28 @@ def main():
         if metadata['public'] or metadata['owner']['login'] != owner:
             raise ValueError('Target must be the existing secret personal Gist owned by the expected account')
         private_write(output / 'publication-before.private.json', json.dumps(metadata))
+        contents = {args.filename: body}
+        if args.filename == 'artme.conf':
+            aliases = target.get('aliases', [])
+            if not isinstance(aliases, list) or len(aliases) > 5:
+                raise ValueError('Invalid publication aliases')
+            for alias in aliases:
+                if not isinstance(alias, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]{0,75}\.conf', alias) or alias == args.filename or alias not in metadata['files']:
+                    raise ValueError('Alias must be a distinct existing config in the same personal Gist')
+                contents[alias] = body
         payload = output / 'publish-artme.json'
-        private_write(payload, json.dumps({'files': {args.filename: {'content': body}}}))
+        private_write(payload, json.dumps({'files': {name: {'content': content} for name, content in contents.items()}}))
         gh('api', '--method', 'PATCH', f'gists/{gist}', '--input', str(payload), '--silent')
         # Verify the exact stored file without displaying its contents or changing other Gist files.
         after = json.loads(gh('api', f'gists/{gist}'))
         stored = after['files'][args.filename]
         for name, previous in metadata['files'].items():
-            if name != args.filename and after['files'].get(name, {}).get('content') != previous.get('content'):
+            if name not in contents and after['files'].get(name, {}).get('content') != previous.get('content'):
                 raise ValueError('An unrelated publication file changed')
-        if stored.get('truncated') or stored['content'] != body:
-            raise ValueError('Published file could not be verified byte-for-byte')
+        for name, content in contents.items():
+            stored = after['files'][name]
+            if stored.get('truncated') or stored['content'] != content:
+                raise ValueError('Published file could not be verified byte-for-byte')
         private_write(output / 'artme-url.txt', update_url + '\n')
         print(f'Published and verified {args.filename} in existing secret personal Gist. Other files unchanged.')
 

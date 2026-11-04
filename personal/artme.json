@@ -2,43 +2,78 @@
   "title": "artme",
   "servers": [
     {
-      "name": "AR-XEOVO-NEWYORK",
+      "name": "VPN-XEOVO-NETHERLANDS-SS",
+      "provider": "xeovo",
+      "server": "nl-global8",
+      "protocol": "ss"
+    },
+    {
+      "name": "VPN-XEOVO-GERMANY-TROJAN",
+      "provider": "xeovo",
+      "server": "de-global5",
+      "protocol": "trojan"
+    },
+    {
+      "name": "VPN-XEOVO-NEWYORK",
       "provider": "xeovo",
       "server": "us-nyc-global4",
       "protocol": "vless"
     },
     {
-      "name": "AR-XEOVO-LASVEGAS",
+      "name": "VPN-XEOVO-SWEDEN",
       "provider": "xeovo",
-      "server": "us-lv-GlobalCDN2",
+      "server": "se-global2",
       "protocol": "vless"
     },
     {
-      "name": "AR-BLANC-NEWYORK",
+      "name": "VPN-XEOVO-SINGAPORE",
+      "provider": "xeovo",
+      "server": "sg-global1",
+      "protocol": "vless"
+    },
+    {
+      "name": "VPN-BLANC-AMSTERDAM",
       "provider": "blanc",
-      "server": "Нью-Йорк",
+      "server": "Амстердам",
       "protocol": "vless"
     },
     {
-      "name": "AR-BLANC-FRANKFURT",
+      "name": "VPN-BLANC-FRANKFURT",
       "provider": "blanc",
       "server": "Франкфурт-на-Майне",
       "protocol": "vless"
     },
     {
-      "name": "AR-BLANC-ALMATY",
+      "name": "VPN-BLANC-ZURICH",
+      "provider": "blanc",
+      "server": "Цюрих",
+      "protocol": "vless"
+    },
+    {
+      "name": "VPN-BLANC-ALMATY",
       "provider": "blanc",
       "server": "Алматы",
+      "protocol": "vless"
+    },
+    {
+      "name": "VPN-BLANC-FINLAND",
+      "provider": "blanc",
+      "server": "Оулу",
       "protocol": "vless"
     }
   ],
   "rotation": {
     "priority": [
-      "AR-XEOVO-NEWYORK",
-      "AR-XEOVO-LASVEGAS",
-      "AR-BLANC-NEWYORK",
-      "AR-BLANC-FRANKFURT",
-      "AR-BLANC-ALMATY"
+      "VPN-XEOVO-NETHERLANDS-SS",
+      "VPN-XEOVO-GERMANY-TROJAN",
+      "VPN-XEOVO-NEWYORK",
+      "VPN-XEOVO-SWEDEN",
+      "VPN-BLANC-AMSTERDAM",
+      "VPN-BLANC-FRANKFURT",
+      "VPN-BLANC-ZURICH",
+      "VPN-BLANC-ALMATY",
+      "VPN-BLANC-FINLAND",
+      "VPN-XEOVO-SINGAPORE"
     ],
     "selected": "AUTO",
     "url": "https://www.gstatic.com/generate_204",
