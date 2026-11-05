@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.local.ai-watch</string>
+<key>ProgramArguments</key><array>
+<string>/usr/bin/python3</string><string>/Users/artem/custom-network/shadowrocket-config/mac-guards/guard.py</string><string>watch</string><string>--enforce</string></array>
+<key>RunAtLoad</key><true/>
+<key>StartInterval</key><integer>60</integer>
+<key>StandardErrorPath</key><string>/Users/artem/Library/Logs/ai-watch-errors.log</string>
+</dict></plist>
