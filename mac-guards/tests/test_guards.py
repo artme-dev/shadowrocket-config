@@ -50,6 +50,10 @@ class GuardTests(unittest.TestCase):
     with patch.object(guard,'POLICY',policy),patch.object(guard,'STATE',Path(folder)),patch.object(guard,'vpn_interface',return_value='utun8'),patch.object(guard,'check_service',return_value={'service':'OPENAI','status':status}),patch.object(guard,'record'),patch.object(guard,'notify'),patch.object(guard,'run',return_value=subprocess.CompletedProcess([],0,'','')) as call:
      guard.watch(enforce=True)
      self.assertEqual(call.call_count,expected_calls)
+ def test_busy_watch_is_not_a_successful_check(self):
+  with tempfile.TemporaryDirectory() as folder:
+   with patch.object(guard,'STATE',Path(folder)),patch.object(guard.fcntl,'flock',side_effect=BlockingIOError),patch.object(guard,'record') as record:
+    self.assertEqual(guard.watch(),75);record.assert_not_called()
  def test_cached_firewall_loaded_before_dns(self):
   import json
   import subprocess

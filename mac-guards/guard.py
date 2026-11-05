@@ -120,7 +120,8 @@ def watch(enforce=False):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return 0
+            print('AI guard: another probe cycle is active', file=sys.stderr)
+            return 75
         policy = json.loads(POLICY.read_text())
         interface = vpn_interface()
         report = {'at': datetime.datetime.now().astimezone().isoformat(),
