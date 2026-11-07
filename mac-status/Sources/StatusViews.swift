@@ -46,76 +46,81 @@ final class StatusStore: ObservableObject {
     }
 }
 
-struct StatusHeader: View {
-    @ObservedObject var store: StatusStore
-    var body: some View {
-        let health = store.snapshot.health(at: store.now)
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: health.symbol)
-                .font(.system(size: 30, weight: .regular)).symbolRenderingMode(.hierarchical)
-                .foregroundStyle(health.color).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(store.snapshot.headline(at: store.now)).font(.system(size: 16, weight: .semibold))
-                Text(store.age).font(.system(size: 12)).foregroundStyle(.secondary)
+struct GlassDivider: View {
+    var body: some View { Divider() }
+}
+
+enum ServiceArtwork {
+    static let images: [String: NSImage] = {
+        var images: [String: NSImage] = [:]
+        let candidates = ["OPENAI": ["com.openai.chat", "com.openai.codex"],
+                          "CLAUDE": ["com.anthropic.claudefordesktop"]]
+        for (service, identifiers) in candidates {
+            if let url = identifiers.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first {
+                images[service] = NSWorkspace.shared.icon(forFile: url.path)
             }
-            Spacer(minLength: 0)
         }
-        .accessibilityElement(children: .combine)
-    }
+        return images
+    }()
 }
 
 struct ServiceRow: View {
     let service: ServiceState
     var body: some View {
-        HStack(alignment: .center, spacing: 11) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .quaternaryLabelColor).opacity(0.45))
-                Image(systemName: service.id == "OPENAI" ? "sparkle" : "asterisk")
-                    .font(.system(size: 18, weight: .medium)).foregroundStyle(.primary)
-            }.frame(width: 34, height: 34).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(service.name).font(.system(size: 13, weight: .semibold))
-                Text(service.observed).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+        HStack(spacing: 10) {
+            Group {
+                if let image = ServiceArtwork.images[service.id] {
+                    Image(nsImage: image).resizable().interpolation(.high).frame(width: 34, height: 34)
+                } else {
+                    Image(systemName: service.id == "OPENAI" ? "sparkle" : "asterisk")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(service.health == .good ? Color.green : service.health.color)
+                        .frame(width: 34, height: 34).background(.white, in: Circle())
+                }
+            }.accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(service.name).font(.system(size: 13.5, weight: .semibold))
+                Text(service.observed).font(.system(size: 13)).monospacedDigit()
+                    .foregroundStyle(.primary.opacity(0.82)).lineLimit(1).truncationMode(.middle)
+
             }
             Spacer(minLength: 4)
-            Image(systemName: service.health.symbol).foregroundStyle(service.health.color)
-                .font(.system(size: 14)).help(service.title)
+            Image(systemName: service.health == .good ? "checkmark" : service.health.symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(service.health == .good ? Color.primary.opacity(0.8) : service.health.color)
+                .help(service.title)
         }
-        .padding(.horizontal, 13).padding(.vertical, 11)
+        .frame(height: 47)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(service.name). \(service.title). Выходной IP: \(service.observed)")
     }
 }
 
-struct GroupSurface<Content: View>: View {
-    @ViewBuilder let content: Content
+struct GlassAction: View {
+    let title: String
+    var symbol: String? = nil
+    var help: String = ""
+    var action: () -> Void
+    @State private var hovering = false
     var body: some View {
-        VStack(spacing: 0) { content }
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.045), lineWidth: 0.5))
+        Button(action: action) {
+            HStack {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Spacer()
+                if let symbol { Image(systemName: symbol).font(.system(size: 12)) }
+            }
+            .padding(.horizontal, 7).padding(.vertical, 7)
+            .contentShape(Rectangle())
+            .background(.white.opacity(hovering ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain).onHover { hovering = $0 }.help(help)
+        .padding(.horizontal, -7)
     }
 }
 
-struct ProtectionRow: View {
-    let icon: String
-    let title: String
-    let value: String
-    let detail: String
-    let health: Health
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(.secondary)
-                .frame(width: 20, height: 19).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(title).font(.system(size: 12, weight: .medium))
-                    Spacer(minLength: 4)
-                    Text(value).font(.system(size: 12)).foregroundStyle(health == .good ? Color.secondary : health.color)
-                }
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-        }.padding(13).accessibilityElement(children: .combine)
+struct ProtectionLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) { configuration.icon.frame(width: 20); configuration.title }
     }
 }
 
@@ -123,71 +128,50 @@ struct StatusPanel: View {
     @ObservedObject var store: StatusStore
     var showDetails: () -> Void
     var quit: () -> Void
-    @State private var copied = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("AI Network").font(.system(size: 15, weight: .bold))
+                Spacer()
+                Image(systemName: store.snapshot.health(at: store.now).symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(store.snapshot.health(at: store.now).color).accessibilityHidden(true)
+            }
+            Text(store.snapshot.headline(at: store.now))
+                .font(.system(size: 13, weight: .medium)).padding(.top, 10).lineLimit(1)
+            Text(store.age).font(.system(size: 12.5)).foregroundStyle(.primary.opacity(0.82)).padding(.top, 3)
+            GlassDivider().padding(.vertical, 12)
+            Text("Выходные адреса").font(.system(size: 13, weight: .semibold)).accessibilityAddTraits(.isHeader).padding(.bottom, 6)
+            ForEach(store.snapshot.services(at: store.now)) { ServiceRow(service: $0) }
+            GlassDivider().padding(.vertical, 12)
+            Text("Защита").font(.system(size: 13, weight: .semibold)).accessibilityAddTraits(.isHeader).padding(.bottom, 10)
             HStack {
-                Text("AI Network").font(.system(size: 13, weight: .semibold))
+                Label("Watcher", systemImage: "eye").labelStyle(ProtectionLabelStyle())
                 Spacer()
-                Text("Только просмотр").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 7).padding(.vertical, 4)
-                    .background(.quaternary.opacity(0.5), in: Capsule())
-            }
-            StatusHeader(store: store)
-            VStack(alignment: .leading, spacing: 7) {
-                Text("ВЫХОДНЫЕ АДРЕСА").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).padding(.leading, 3)
-                GroupSurface {
-                    ForEach(Array(store.snapshot.services(at: store.now).enumerated()), id: \.element.id) { index, service in
-                        if index > 0 { Divider().padding(.leading, 58) }
-                        ServiceRow(service: service)
-                    }
-                }
-            }
-            VStack(alignment: .leading, spacing: 7) {
-                Text("ЗАЩИТА MAC").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).padding(.leading, 3)
-                GroupSurface {
-                    ProtectionRow(icon: "eye", title: "Watcher",
-                                  value: watcherValue,
-                                  detail: store.snapshot.watcher.enforcing ? "Проверяет IP раз в минуту" : "Режим с закрытием приложений не подтверждён",
-                                  health: store.snapshot.watcher.healthy && store.snapshot.watcher.enforcing ? .good : .warning)
-                    Divider().padding(.leading, 43)
-                    ProtectionRow(icon: "shield.lefthalf.filled", title: "Kill switch",
-                                  value: store.snapshot.firewall.healthy ? "Служба работает" : store.snapshot.firewall.description,
-                                  detail: firewallDetail,
-                                  health: store.snapshot.firewall.healthy ? .good : .warning)
-                }
-            }
-            HStack(spacing: 7) {
-                Image(systemName: "network").accessibilityHidden(true)
-                Text(store.snapshot.route?.hasPrefix("utun") == true ? "Туннель · \(store.snapshot.route!)" : "Маршрут: \(store.snapshot.route ?? "не определён")")
+                Text(watcherValue).foregroundStyle(.primary.opacity(0.82))
+            }.font(.system(size: 13)).lineLimit(1)
+            HStack {
+                Label("Kill switch", systemImage: "shield.lefthalf.filled").labelStyle(ProtectionLabelStyle())
                 Spacer()
-                Button("Подробнее…", action: showDetails).buttonStyle(.link)
-            }.font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 2)
-            Divider()
-            HStack(spacing: 8) {
-                Button(action: { store.refresh() }) {
-                    Label("Обновить", systemImage: "arrow.clockwise")
-                }.keyboardShortcut("r", modifiers: .command).disabled(store.refreshing)
-                    .help("Перечитать локальные статусы. Новые сетевые проверки выполняет watcher.")
-                Spacer()
-                Button(action: {
-                    store.copySummary(); copied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
-                }) { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
-                    .accessibilityLabel(copied ? "Сводка скопирована" : "Скопировать сводку")
-                    .help("Скопировать сводку без ключей и паролей")
-                Button(action: quit) { Image(systemName: "power") }
-                    .accessibilityLabel("Выйти из AI Network").help("Выйти. Watcher и firewall продолжат работать.")
-            }.buttonStyle(.bordered).controlSize(.small)
+                Text(store.snapshot.firewall.healthy ? "Служба работает" : "Требует внимания")
+                    .foregroundStyle(.primary.opacity(0.82))
+            }.font(.system(size: 13)).padding(.top, 10).lineLimit(1)
+            Text(firewallDetail).font(.system(size: 11.5)).foregroundStyle(.primary.opacity(0.82))
+                .padding(.top, 6).padding(.leading, 28)
+            GlassDivider().padding(.top, 12).padding(.bottom, 5)
+            GlassAction(title: "Обновить данные", symbol: "arrow.clockwise",
+                        help: "Перечитать локальные статусы. Сетевые пробы выполняет watcher.", action: store.refresh)
+                .keyboardShortcut("r", modifiers: .command).disabled(store.refreshing)
+            GlassAction(title: "Подробнее…", action: showDetails)
         }
-        .padding(18).frame(width: 360)
+        .padding(15).frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)
+        .environment(\.colorScheme, .dark)
         .environment(\.locale, Locale(identifier: "ru_RU"))
     }
     var watcherValue: String {
-        let w = store.snapshot.watcher
-        if w.healthy && w.enforcing { return "Включён" }
-        return w.description
+        if store.snapshot.watcher.healthy && store.snapshot.watcher.enforcing { return "Включён" }
+        return store.snapshot.watcher.loaded ? "Требует внимания" : "Выключен"
     }
     var firewallDetail: String {
         if let date = store.snapshot.firewallVerificationDate {
@@ -197,51 +181,79 @@ struct StatusPanel: View {
     }
 }
 
+struct DetailSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.system(size: 13, weight: .bold)).accessibilityAddTraits(.isHeader)
+            content
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+struct DetailLine: View {
+    let title: String
+    let value: String
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+            Spacer(minLength: 18)
+            Text(value).foregroundStyle(.primary.opacity(0.82)).multilineTextAlignment(.trailing).textSelection(.enabled)
+        }.font(.system(size: 13))
+    }
+}
+
 struct DetailView: View {
     @ObservedObject var store: StatusStore
     var body: some View {
-        Form {
-            Section {
-                StatusHeader(store: store).padding(.vertical, 6)
-                LabeledContent("Последняя IP-проверка", value: store.snapshot.checkDate.map { ruDate($0, seconds: true) } ?? "Нет данных")
-                LabeledContent("Туннель", value: store.snapshot.route ?? "Не обнаружен")
-                LabeledContent("Статус считан", value: ruDate(store.snapshot.readAt, date: false, seconds: true))
-            }
-            ForEach(store.snapshot.services(at: store.now)) { service in
-                Section(service.name) {
-                    LabeledContent("Результат") { Label(service.title, systemImage: service.health.symbol).foregroundStyle(service.health.color) }
-                    LabeledContent("Ожидаемый IP", value: service.expected ?? "Нет данных").textSelection(.enabled)
-                    LabeledContent("Наблюдаемый IP", value: service.observed).textSelection(.enabled)
-                    if let sample = service.sample {
-                        ForEach(Array(sample.checks.enumerated()), id: \.offset) { _, check in
-                            LabeledContent(URL(string: check.endpoint)?.host ?? "Проверка") {
-                                Text(check.status == "healthy" && service.fresh ? "Подтверждён" : service.fresh ? "Не подтверждён" : "Устарело")
-                                    .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 17) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("AI Network").font(.system(size: 20, weight: .bold))
+                        Text(store.snapshot.headline(at: store.now)).font(.system(size: 13.5))
+                    }
+                    Spacer()
+                    Image(systemName: store.snapshot.health(at: store.now).symbol)
+                        .font(.system(size: 23)).foregroundStyle(store.snapshot.health(at: store.now).color)
+                }
+                Text(store.age).font(.system(size: 12.5)).foregroundStyle(.primary.opacity(0.82))
+                GlassDivider()
+                ForEach(store.snapshot.services(at: store.now)) { service in
+                    DetailSection(title: service.name) {
+                        DetailLine(title: "Результат", value: service.title)
+                        DetailLine(title: "Ожидаемый IP", value: service.expected ?? "Нет данных")
+                        DetailLine(title: "Наблюдаемый IP", value: service.observed)
+                        if let sample = service.sample {
+                            ForEach(Array(sample.checks.enumerated()), id: \.offset) { _, check in
+                                DetailLine(title: URL(string: check.endpoint)?.host ?? "Проверка",
+                                           value: check.status == "healthy" && service.fresh ? "Подтверждён" : "Не подтверждён")
                             }
                         }
                     }
+                    GlassDivider()
                 }
-            }
-            Section("Защита") {
-                LabeledContent("Watcher", value: store.snapshot.watcher.description)
-                LabeledContent("Реакция OpenAI", value: store.snapshot.watcher.enforcing ? "Закрытие при неверном IP" : "Не подтверждена")
-                LabeledContent("Реакция Claude", value: "Предупреждение")
-                LabeledContent("Служба kill switch", value: store.snapshot.firewall.description)
-                LabeledContent("Проверка блокировки", value: store.snapshot.firewallVerificationDate.map { ruDate($0) } ?? "Нет сохранённого отчёта")
-                Text("Состояние службы и последняя проверка правил показаны отдельно. Чтение текущих правил PF требует прав администратора и здесь не выполняется.")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            Section {
-                Text("Приложение перечитывает локальные данные каждые 15 секунд. Сетевые проверки выполняет watcher раз в минуту. Проверка старше 2½ минут помечается как устаревшая.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Text("Выход из приложения не останавливает watcher, firewall или VPN.")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
+                DetailSection(title: "Защита Mac") {
+                    DetailLine(title: "Watcher", value: store.snapshot.watcher.description)
+                    DetailLine(title: "OpenAI", value: store.snapshot.watcher.enforcing ? "Закрытие при неверном IP" : "Режим не подтверждён")
+                    DetailLine(title: "Claude", value: "Предупреждение")
+                    DetailLine(title: "Служба kill switch", value: store.snapshot.firewall.description)
+                    DetailLine(title: "Проверка блокировки", value: store.snapshot.firewallVerificationDate.map { ruDate($0) } ?? "Нет отчёта")
+                    Text("Здесь показаны состояние службы и дата сохранённой проверки. Текущие правила firewall требуют прав администратора и приложением не проверяются.")
+                        .font(.system(size: 12)).foregroundStyle(.primary.opacity(0.82)).fixedSize(horizontal: false, vertical: true)
+                }
+                GlassDivider()
+                DetailSection(title: "Последняя проверка") {
+                    DetailLine(title: "IP-проверка", value: store.snapshot.checkDate.map { ruDate($0, seconds: true) } ?? "Нет данных")
+                    DetailLine(title: "Туннель", value: store.snapshot.route ?? "Не обнаружен")
+                    Text("Watcher проверяет IP раз в минуту. Приложение обновляет локальные данные каждые 15 секунд. Выход из приложения не останавливает защиту.")
+                        .font(.system(size: 12)).foregroundStyle(.primary.opacity(0.82)).fixedSize(horizontal: false, vertical: true)
+                }
+            }.padding(22)
         }
-        .formStyle(.grouped)
+        .environment(\.colorScheme, .dark)
         .environment(\.locale, Locale(identifier: "ru_RU"))
-        .frame(minWidth: 540, idealWidth: 580, minHeight: 600, idealHeight: 700)
-
+        .frame(minWidth: 480, minHeight: 500)
     }
 }
 

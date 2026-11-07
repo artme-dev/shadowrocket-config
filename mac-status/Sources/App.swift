@@ -1,10 +1,12 @@
 import AppKit
 import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSToolbarDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSToolbarDelegate, NSMenuItemValidation {
     let store = StatusStore()
     var item: NSStatusItem!
-    let popover = NSPopover()
+    var panel: StatusGlassPanel?
+    var localEventMonitor: Any?
+    var previousApplication: NSRunningApplication?
     var detailWindow: NSWindow?
     var previewWindow: NSWindow?
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -18,15 +20,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         item.button?.action = #selector(togglePanel)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         item.button?.setAccessibilityLabel("AI Network: состояние AI-маршрутов")
-        popover.behavior = .transient
-        popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: StatusPanel(store: store,
-            showDetails: { [weak self] in self?.openDetails() }, quit: { NSApp.terminate(nil) }))
+        NotificationCenter.default.addObserver(self, selector: #selector(hidePanel),
+            name: NSApplication.didResignActiveNotification, object: nil)
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            guard let self, let panel = self.panel, panel.isVisible else { return event }
+            if event.type == .keyDown {
+                if event.keyCode == 53 { self.dismissPanelRestoringFocus(); return nil }
+            } else if event.window !== panel, event.window !== self.item.button?.window { self.hidePanel() }
+            return event
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(hidePanel),
+            name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         store.onChange = { [weak self] in self?.updateIcon() }
         updateIcon()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             if Bundle.main.object(forInfoDictionaryKey: "AINetworkPreviewPanel") as? Bool == true { self.openPreviewPanel() }
-            else { self.openDetails() }
+            else { self.showPanel() }
         }
     }
     func buildMenu() {
@@ -47,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         edit.addItem(withTitle: "Выбрать всё", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         let windowRoot = NSMenuItem(); menu.addItem(windowRoot)
         let windowMenu = NSMenu(title: "Окно"); windowRoot.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Закрыть", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Закрыть", action: #selector(closeCurrentWindow), keyEquivalent: "w").target = self
         windowMenu.addItem(withTitle: "Свернуть", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Изменить масштаб", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(NSMenuItem.separator())
@@ -57,37 +66,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     }
     func updateIcon() {
         let health = store.snapshot.health(at: Date())
-        let symbol = health == .good ? "checkmark.shield" : health == .bad ? "exclamationmark.shield" : "shield.slash"
+        let symbol = health == .good ? "checkmark.shield" : health == .bad ? "exclamationmark.shield" : "exclamationmark.triangle"
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: store.snapshot.headline(at: Date()))!
         image.isTemplate = true
         item.button?.image = image
-        item.button?.toolTip = "AI Network — \(store.snapshot.headline(at: Date()))"
+        item.button?.toolTip = "AI Network — \(store.snapshot.headline(at: Date()))\n\(store.age)"
+        item.button?.setAccessibilityValue("\(store.snapshot.headline(at: Date())). \(store.age)")
     }
     @objc func togglePanel() {
         if NSApp.currentEvent?.type == .rightMouseUp {
+            hidePanel()
             let menu = NSMenu()
             menu.addItem(withTitle: "Подробнее…", action: #selector(openDetails), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Скопировать сводку", action: #selector(copyStatus), keyEquivalent: "").target = self
+            menu.addItem(NSMenuItem.separator())
             menu.addItem(withTitle: "Выйти из AI Network", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             item.menu = menu; item.button?.performClick(nil); item.menu = nil
-        } else if popover.isShown { popover.performClose(nil) } else { showPanel() }
+        } else if panel?.isVisible == true { dismissPanelRestoringFocus() } else { showPanel() }
+    }
+    @objc func hidePanel() {
+        panel?.orderOut(nil)
+        item.button?.highlight(false)
+    }
+    func dismissPanelRestoringFocus() {
+        hidePanel()
+        previousApplication?.activate(options: [])
+    }
+    @objc func closeCurrentWindow() {
+        if panel?.isVisible == true { dismissPanelRestoringFocus() }
+        else { NSApp.keyWindow?.performClose(nil) }
     }
     func showPanel() {
-        guard let button = item.button else { return }
+        guard let button = item.button, let statusWindow = button.window else { return }
         store.refresh()
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier { previousApplication = frontmost }
+        if panel == nil {
+            let host = GlassHost(rootView: StatusPanel(store: store,
+                showDetails: { [weak self] in self?.openDetails() }, quit: { NSApp.terminate(nil) }))
+            let window = StatusGlassPanel(contentRect: NSRect(origin: .zero, size: host.preferredContentSize),
+                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            window.title = "AI Network"
+            window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = true
+            window.level = .popUpMenu
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            window.isReleasedWhenClosed = false
+            window.contentViewController = host
+            window.animationBehavior = .utilityWindow
+            window.onDismiss = { [weak self] in self?.dismissPanelRestoringFocus() }
+            panel = window
+        }
+        guard let panel else { return }
+        let anchor = statusWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        let screen = statusWindow.screen ?? NSScreen.main!
+        let visible = screen.visibleFrame
+        let x = min(max(anchor.maxX - panel.frame.width, visible.minX + 8), visible.maxX - panel.frame.width - 8)
+        let y = max(visible.minY + 8, anchor.minY - panel.frame.height - 7)
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
         NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(nil)
+        button.highlight(true)
     }
     @objc func openDetails() {
-        popover.performClose(nil)
+        hidePanel()
         if let window = detailWindow { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        let content = DetailView(store: store)
-        let controller = NSHostingController(rootView: content)
+        let controller = GlassHost(rootView: DetailView(store: store), size: NSSize(width: 520, height: 680))
         let window = NSWindow(contentViewController: controller)
         window.title = "AI Network"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 580, height: 700))
-        window.minSize = NSSize(width: 560, height: 500)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
+        window.isOpaque = false; window.backgroundColor = .clear
+        window.appearance = NSAppearance(named: .vibrantDark)
+        window.setContentSize(NSSize(width: 520, height: 680))
+        window.minSize = NSSize(width: 500, height: 500)
         let toolbar = NSToolbar(identifier: "AINetwork.DetailToolbar")
         toolbar.delegate = self; toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
@@ -101,7 +153,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         window.makeKeyAndOrderFront(nil)
     }
     @objc func reloadStatus() { store.refresh() }
-    @objc func copyStatus() { store.copySummary() }
+    @objc func copyStatus() {
+        store.copySummary()
+        let copy = detailWindow?.toolbar?.items.first { $0.itemIdentifier.rawValue == "copy" }
+        copy?.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Сводка скопирована")
+        copy?.toolTip = "Сводка скопирована"
+        copy?.label = "Сводка скопирована"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak copy] in
+            copy?.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Скопировать сводку")
+            copy?.toolTip = "Скопировать сводку"
+            copy?.label = "Скопировать сводку"
+        }
+    }
     @objc func revealLog() { store.showLog() }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.flexibleSpace, .init("refresh"), .init("copy"), .init("log")]
@@ -121,19 +184,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     }
     // Local visual QA uses the exact popover content in a standard window; no live data is modified.
     func openPreviewPanel() {
-        let controller = NSHostingController(rootView: StatusPanel(store: store,
+        let controller = GlassHost(rootView: StatusPanel(store: store,
             showDetails: { [weak self] in self?.openDetails() }, quit: { NSApp.terminate(nil) }))
         let window = NSWindow(contentViewController: controller)
         window.title = "AI Network"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 360, height: controller.view.fittingSize.height))
+        window.setContentSize(controller.preferredContentSize)
         window.isReleasedWhenClosed = false; window.center(); previewWindow = window
         NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
     }
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { openDetails(); return false }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(closeCurrentWindow) { return panel?.isVisible == true || NSApp.keyWindow != nil }
+        if menuItem.action == #selector(reloadStatus) { return !store.refreshing }
+        return true
+    }
+    func applicationWillTerminate(_ notification: Notification) {
+        if let monitor = localEventMonitor { NSEvent.removeMonitor(monitor) }
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let panel, panel.isVisible { panel.makeKeyAndOrderFront(nil) }
+        else if let window = detailWindow, window.isVisible { window.makeKeyAndOrderFront(nil) }
+        else { showPanel() }
+        return false
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     @objc func about() {
-        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "AI Network", .applicationVersion: "1.0",
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "AI Network", .applicationVersion: "1.1",
             .credits: NSAttributedString(string: "Личный монитор AI-маршрутов. Только просмотр.\nWatcher, firewall и VPN работают независимо.")])
     }
 }

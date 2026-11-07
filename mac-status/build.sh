@@ -9,8 +9,8 @@ SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 mkdir -p "$OUT/module-cache" "$APP/Contents/MacOS" "$APP/Contents/Resources"
 ARCH=$(uname -m)
 "$COMPILER" -swift-version 5 -parse-as-library -O \
-  -target "$ARCH-apple-macosx13.0" -sdk "$SDK" -module-cache-path "$OUT/module-cache" \
-  "$HERE/Sources/StatusModel.swift" "$HERE/Sources/StatusViews.swift" "$HERE/Sources/App.swift" \
+  -target "$ARCH-apple-macosx26.0" -sdk "$SDK" -module-cache-path "$OUT/module-cache" \
+  "$HERE/Sources/StatusModel.swift" "$HERE/Sources/StatusViews.swift" "$HERE/Sources/GlassPresentation.swift" "$HERE/Sources/App.swift" \
   "$HERE/Tests/StatusModelTests.swift" \
   -framework AppKit -framework SwiftUI -framework Combine \
   -o "$APP/Contents/MacOS/AI Network"
@@ -23,15 +23,15 @@ cat > "$APP/Contents/Info.plist" <<'XML'
 <key>CFBundleExecutable</key><string>AI Network</string>
 <key>CFBundleIdentifier</key><string>dev.artme.AINetwork</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>CFBundleShortVersionString</key><string>1.1</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSHumanReadableCopyright</key><string>Личный монитор сети · Только просмотр</string>
 </dict></plist>
 XML
-"$COMPILER" -swift-version 5 -target "$ARCH-apple-macosx13.0" -sdk "$SDK" \
+"$COMPILER" -swift-version 5 -target "$ARCH-apple-macosx26.0" -sdk "$SDK" \
   -module-cache-path "$OUT/module-cache" "$HERE/Tools/MakeIcon.swift" -framework AppKit -o "$OUT/make-icon"
 "$OUT/make-icon" "$OUT/AppIcon.iconset"
 /usr/bin/iconutil -c icns "$OUT/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
