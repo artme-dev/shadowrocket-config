@@ -105,6 +105,10 @@ def record(report):
 
 
 def notify(service, status, message):
+    # Availability is visible in the log/status app. Sleep, wake and transient HTTP
+    # failures must not accumulate banners. Only a confirmed wrong exit is urgent.
+    if status != 'wrong_exit':
+        return
     marker = STATE / (service + '-' + status + '.notice')
     if marker.exists() and time.time() - marker.stat().st_mtime < 600:
         return
@@ -129,8 +133,6 @@ def watch(enforce=False):
         if not interface:
             report['status'] = 'vpn_unavailable'
             record(report)
-            if enforce:
-                notify('VPN', 'unavailable', 'Нет маршрута utun: IP-пробы не выполнялись. Проверь VPN.')
             print(json.dumps(report, ensure_ascii=False))
             return 2
         for service, cfg in policy['services'].items():
@@ -142,11 +144,8 @@ def watch(enforce=False):
                     if outcome.returncode == 0:
                         result['terminated'].append(process)
             report['services'].append(result)
-            if enforce and result['status'] != 'healthy':
-                if result['status'] == 'wrong_exit':
-                    message = f'{service}: два ответа подтвердили неверный IP. Закрыто: {", ".join(result["terminated"]) or "нет запущенных приложений"}. Проверь Config и ISP.'
-                else:
-                    message = f'{service}: проверка недоступна или нестабильна. Приложения не закрывались.'
+            if enforce and result['status'] == 'wrong_exit':
+                message = f'{service}: два ответа подтвердили неверный IP. Закрыто: {", ".join(result["terminated"]) or "нет запущенных приложений"}. Проверь Config и ISP.'
                 notify(service, result['status'], message)
         report['status'] = 'healthy' if all(x['status'] == 'healthy' for x in report['services']) else 'attention'
         record(report)

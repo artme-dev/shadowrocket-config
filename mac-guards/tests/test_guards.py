@@ -54,6 +54,51 @@ class GuardTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as folder:
    with patch.object(guard,'STATE',Path(folder)),patch.object(guard.fcntl,'flock',side_effect=BlockingIOError),patch.object(guard,'record') as record:
     self.assertEqual(guard.watch(),75);record.assert_not_called()
+ def test_availability_alerts_are_suppressed_at_dispatch(self):
+  with tempfile.TemporaryDirectory() as folder:
+   with patch.object(guard,'STATE',Path(folder)),patch.object(guard,'run') as call:
+    for status in ['unavailable','partial','unstable','healthy']:
+     guard.notify('OPENAI',status,'not a confirmed leak')
+    call.assert_not_called()
+    self.assertEqual(list(Path(folder).iterdir()),[])
+ def test_critical_dispatch_still_emits_once_per_cooldown(self):
+  import subprocess
+  with tempfile.TemporaryDirectory() as folder:
+   with patch.object(guard,'STATE',Path(folder)),patch.object(guard,'run',return_value=subprocess.CompletedProcess([],0,'','')) as call:
+    guard.notify('OPENAI','wrong_exit','Confirmed wrong exit')
+    guard.notify('OPENAI','wrong_exit','Confirmed wrong exit')
+    call.assert_called_once()
+    self.assertEqual(call.call_args.args[0][-1],'Confirmed wrong exit')
+    self.assertTrue((Path(folder)/'OPENAI-wrong_exit.notice').exists())
+ def test_noncritical_enforced_cycles_keep_status_without_banners(self):
+  import json
+  import subprocess
+  with tempfile.TemporaryDirectory() as folder:
+   policy=Path(folder)/'policy.json';policy.write_text(json.dumps({'services':{'CLAUDE':{'expected_ip':'1.1.1.1','terminate':[]}}}))
+   for status in ['unavailable','partial','unstable']:
+    with patch.object(guard,'POLICY',policy),patch.object(guard,'STATE',Path(folder)),patch.object(guard,'vpn_interface',return_value='utun8'),patch.object(guard,'check_service',return_value={'service':'CLAUDE','status':status}),patch.object(guard,'record') as record,patch.object(guard,'notify') as notify,patch.object(guard,'run') as command:
+     self.assertEqual(guard.watch(enforce=True),2)
+     notify.assert_not_called();command.assert_not_called()
+     self.assertEqual(record.call_args.args[0]['services'][0]['status'],status)
+ def test_no_tunnel_is_silent_and_still_recorded(self):
+  import json
+  with tempfile.TemporaryDirectory() as folder:
+   policy=Path(folder)/'policy.json';policy.write_text(json.dumps({'services':{}}))
+   with patch.object(guard,'POLICY',policy),patch.object(guard,'STATE',Path(folder)),patch.object(guard,'vpn_interface',return_value=None),patch.object(guard,'check_service') as probe,patch.object(guard,'record') as record,patch.object(guard,'notify') as notify:
+    self.assertEqual(guard.watch(enforce=True),2)
+    probe.assert_not_called();notify.assert_not_called()
+    self.assertEqual(record.call_args.args[0]['status'],'vpn_unavailable')
+ def test_confirmed_wrong_exit_still_notifies_and_enforces(self):
+  import json
+  import subprocess
+  with tempfile.TemporaryDirectory() as folder:
+   policy=Path(folder)/'policy.json'
+   for service,processes in [('OPENAI',['codex','Codex','ChatGPT']),('CLAUDE',[])]:
+    policy.write_text(json.dumps({'services':{service:{'expected_ip':'1.1.1.1','terminate':processes}}}))
+    with patch.object(guard,'POLICY',policy),patch.object(guard,'STATE',Path(folder)),patch.object(guard,'vpn_interface',return_value='utun8'),patch.object(guard,'check_service',return_value={'service':service,'status':'wrong_exit'}),patch.object(guard,'record'),patch.object(guard,'notify') as notify,patch.object(guard,'run',return_value=subprocess.CompletedProcess([],0,'','')) as command:
+     self.assertEqual(guard.watch(enforce=True),2)
+     self.assertEqual(command.call_count,len(processes));notify.assert_called_once()
+     self.assertEqual(notify.call_args.args[:2],(service,'wrong_exit'))
  def test_cached_firewall_loaded_before_dns(self):
   import json
   import subprocess
