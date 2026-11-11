@@ -25,8 +25,8 @@ DIRECT → сайт напрямую
 правила обращаются к отдельным OPENAI и CLAUDE, поэтому выбор SERVICE не меняет их.
 
 - `artem-personal`: ручной выбор входа или AUTO, исходно AUTO.
-- `AUTO`: fallback по порядку из `artme.json`, Xeovo Netherlands SS → Germany Trojan → New York WS → Sweden WS →
-  Blanc Amsterdam → Frankfurt → Zurich → Almaty → Finland (Oulu) → Xeovo Singapore WS. Интервал 120 секунд, timeout 5 секунд.
+- `AUTO`: fallback по порядку из `artme.json`, Blanc Amsterdam → Almaty → Frankfurt → Zurich → Finland (Oulu) →
+  Xeovo New York WS → Sweden WS → Netherlands SS → Germany Trojan → Singapore WS. Интервал 120 секунд, timeout 5 секунд.
   Это порядок доступности, не выбор минимальной задержки.
 - `ISP-OPENAI`, `ISP-CLAUDE`: последние выбранные реквизиты IPRoyal Multi-device,
   SOCKS5 UDP включён; оба содержат `chain=artem-personal`.
@@ -90,6 +90,15 @@ uv run tools/assemble_artme.py --publish
 получает тот же профиль с update-url на основной artme.conf.
 URL записывается в `out/artme-url.txt`. Старый телефонный тестовый файл остаётся
 доступен по прежнему адресу для отката. Семейная подписка не затрагивается.
+
+11 ноября 2026 опубликована правка только порядка AUTO: Blanc Amsterdam и Almaty
+перемещены перед остальными входами; Xeovo оставлен в резерве. В сравнительных
+проверках 9 и 11 ноября Netherlands SS имел большую/нестабильную задержку,
+Germany Trojan не подключался. Это изменение не означает, что остаточная задержка
+AI в Shadowrocket устранена: после ручного переключения входа 9 ноября обычный
+трафик ускорился, а нативная ISP-цепочка оставалась медленной. Кэширование Proxy Pass
+— непроверенная гипотеза. VPN не перезапускали, новая публикация на устройстве
+ещё не применена и нативно не проверена. Приватные замеры: `out/diagnostics/2026-11-11/`.
 
 Для повторения текущей сборки из сохранённых снимков:
 

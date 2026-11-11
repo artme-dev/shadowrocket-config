@@ -64,15 +64,15 @@
   ],
   "rotation": {
     "priority": [
-      "VPN-XEOVO-NETHERLANDS-SS",
-      "VPN-XEOVO-GERMANY-TROJAN",
-      "VPN-XEOVO-NEWYORK",
-      "VPN-XEOVO-SWEDEN",
       "VPN-BLANC-AMSTERDAM",
+      "VPN-BLANC-ALMATY",
       "VPN-BLANC-FRANKFURT",
       "VPN-BLANC-ZURICH",
-      "VPN-BLANC-ALMATY",
       "VPN-BLANC-FINLAND",
+      "VPN-XEOVO-NEWYORK",
+      "VPN-XEOVO-SWEDEN",
+      "VPN-XEOVO-NETHERLANDS-SS",
+      "VPN-XEOVO-GERMANY-TROJAN",
       "VPN-XEOVO-SINGAPORE"
     ],
     "selected": "AUTO",
