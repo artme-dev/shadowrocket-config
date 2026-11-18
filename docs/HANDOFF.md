@@ -21,6 +21,8 @@ separate servers-only subscription.
 | Read-only Mac status app | [AI Network](../mac-status/README.md) |
 | Acceptance tests and design history | [Network lab](network-lab/README.md) |
 | Operational incidents | [Incident index](incidents/README.md) |
+| ISP alternatives and Seattle office exit | [ISP and office research](research/2026-11-18-proxy-and-vpn.md) |
+| Stealth VPN criteria and current Xeovo screen | [VPN research](research/2026-11-18-stealth-vpn.md) |
 
 The generated personal profile, its subscription URL and credentials live in
 ignored local files. Get the publication target from `personal/publish.local.json`

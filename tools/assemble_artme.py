@@ -61,7 +61,8 @@ def choose(source, wanted):
         if wanted['provider'] == 'blanc':
             matched = node['name'].split(',', 1)[0].endswith(' ' + wanted['server'])
         else:
-            matched = ' xeovo ' + wanted['server'] + ' (' in node['name']
+            matched = any(f" {label} {wanted['server']} (" in node['name']
+                          for label in ('xeovo', 'xeo'))
             if node['type'] == 'vless':
                 matched = matched and 'ws-opts' in node
         if matched:
