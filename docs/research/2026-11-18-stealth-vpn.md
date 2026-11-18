@@ -61,11 +61,37 @@ a provider-wide outage or imply that every one of the 548 records fails.
 
 The saved New York node is useful as a backup, pending tests on iPhone Wi-Fi
 and mobile data. Do not replace it solely because it is absent from a new
-subscription. For a new provider prioritize Red Shield's exportable VLESS
-and a low-commitment RuSolv import test. Keep Amnezia as a candidate subject
-to the export and local-reachability checks above. A native-app-only service
-can serve as an emergency backup but cannot directly replace this first hop.
+subscription. For new providers, use the expanded shortlist below. A native-app-only
+service can serve as an emergency backup and requires a separate client.
 
 Private raw evidence in `out/diagnostics/2026-11-18/`:
 `xeovo-only-185403.private.json`, `xeovo-protocols-185453.private.json`,
 and `xeovo-current-source.private.json`. Never commit the source snapshot.
+
+## Expanded managed VPN shortlist
+
+Follow-up research checked the exact subscription or export available for
+third-party clients. The ordering below supersedes the earlier candidate order.
+These are pilot candidates, with no local tunnel results yet.
+
+| Pilot order | Service | Shadowrocket and protocol evidence | Trial and caveats |
+| --- | --- | --- | --- |
+| 1 | Tainet | Vendor instructions explicitly cover importing its own subscription into Shadowrocket on iOS. Vendor lists VLESS Reality, Shadowsocks 2022 and Hysteria2. [Import](https://tainet.top/blog/shadowrocket-setup-guide/) · [Protocols](https://tainet.top/) | Seven days free without card per import guide. Verify the exact Apple Silicon Mac import and which nodes the subscription sends to Shadowrocket. Basic plan lists five device slots and a separate 10 GB mobile fallback allowance. [Pricing](https://tainet.top/pricing/) |
+| 2 | Mavrodiy VPN | Vendor has a Shadowrocket guide for iPhone/iPad and Apple Silicon Mac, and documents that it serves a node list to Shadowrocket. Advertises Reality, XHTTP, and Hysteria2. [Import](https://mavrodiyvpn.com/apps/shadowrocket) · [Feed format](https://mavrodiyvpn.com/blog/subscription-key-config) · [Transports](https://mavrodiyvpn.com/vless) | Three days for RUB 10 on one device, crypto via TON. Monthly RUB 249 for three devices; standard plan slows to 10 Mbps past 300 GB per 30 days. Operator status is vendor measurements, not our test. [Trial](https://mavrodiyvpn.com/trial) · [Pricing](https://mavrodiyvpn.com/pricing) · [Status](https://mavrodiyvpn.com/status) |
+| 3 | RuSolv | VLESS Reality subscription for external clients, raw VLESS export is documented. Shadowrocket-specific import is not documented for this plan. [FAQ](https://rusolv.com/docs/faq) | Free VLESS: 10 GB/month, one device and free-tier locations. Start RUB 199/month for two devices. Confirm raw node or ordinary feed imports. [Plans](https://rusolv.com/) |
+| 4 | WBVLESS | Vendor publishes a Shadowrocket subscription guide but asks buyers to verify the exact feed in their client version. [Guide](https://wbvless.com/apps/shadowrocket/) | Free day with 10 GB, then RUB 50/week or RUB 189/month, three devices on the paid standard plan. Verify the transport actually offered in the trial feed. |
+| 5 | Liberty VPN | Vendor documents its own subscription import in Shadowrocket on iPhone/iPad. [Import](https://proxyliberty.com/instructions/apple-tv/) | Personal list price USD 6.99/month. Trial terms vary by account. Confirm Mac import and the transport used by its feed. [Plans](https://proxyliberty.com/us/) |
+| Conditional | Red Shield | Exportable manual VLESS/XTLS-Reality; native app's RedLink is a separate path. [Manual VLESS](https://redshieldvpn.com/ru/help/vpn_on_linux/vless_ubuntu_debian_gui) | Vendor recommends its app over manual configs in countries with VPN filtering. Buy only after confirming the exact manual path suits the intended client. [Support FAQ](https://redshieldvpn.com/en/help/faq/service) |
+| Separate app backup | Amnezia Premium | Vendor offers VLESS Reality in its app. Its Premium dashboard documents downloadable AmneziaWG configs and a supported-client list. The generic alternative-client guide for XRay starts with a self-hosted server. [Premium dashboard](https://docs.amnezia.org/documentation/instructions/personal_dashboard/#configuration-files) · [Alternative clients](https://docs.amnezia.org/documentation/alternative-clients/) | No supported Premium Reality export into Shadowrocket confirmed. Do not count it as a drop-in fixture for this profile. |
+
+Independent context: [OONI Russia report](https://ooni.org/post/2024-russia-report/)
+documents that filtering varies by network and protocol, but its website
+measurements cannot establish VPN tunnel performance. [Freedom Checker](https://freedomchecker.ateo.digital/en/)
+describes regional physical probes, including Novosibirsk. Use those as leads
+only, because their probe access network and credentials may differ from ours.
+
+Pilot two different providers in separate profiles. Confirm import of at least
+two endpoints per provider, check Wi-Fi and cellular independently, and repeat
+after reconnecting. Record TCP/HTTPS success and timeouts first. If the new
+entry will serve the fixed ISP chain, check public source-IP count, then
+repeat through the fixed exit and verify UDP payloads and native voice.
