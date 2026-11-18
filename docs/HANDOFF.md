@@ -16,6 +16,7 @@ separate servers-only subscription.
 | Desired entries, priority and ISP mapping | [personal/artme.json](../personal/artme.json) |
 | Base rules and personal build | [artme.conf](../artme.conf), [personal profile guide](../personal/README.md) |
 | Build and semantic checks | [assemble_artme.py](../tools/assemble_artme.py), [validate_artme.py](../tools/validate_artme.py) |
+| Repeatable ISP smoke check | [Diagnostics](incidents/README.md#повторить-проверку-isp) |
 | Watcher and PF kill switch | [mac-guards](../mac-guards/README.md) |
 | Read-only Mac status app | [AI Network](../mac-status/README.md) |
 | Acceptance tests and design history | [Network lab](network-lab/README.md) |
@@ -46,8 +47,9 @@ manual, as agreed.
   That verifies job registration only. Live PF enforcement was not audited.
   Treat guard rearming as a distinct operation after verifying the AI route.
 - At handoff creation, the working tree had a separate local DIRECT edit for
-  DeepSeek and OpenCode in the base `artme.conf`, and an untracked ISP probe.
-  Neither was bundled with the handoff. Recheck before rebuilding or publishing.
+  DeepSeek and OpenCode in the base `artme.conf`. It was deliberately kept
+  outside the documentation and tooling commits. Recheck before rebuilding or
+  publishing, since the builder reads the working copy of the base rules.
 
 Continue by comparing the current IPRoyal port with the recorded baseline. If
 support repairs the node, use fresh checks through the actual personal Config on
